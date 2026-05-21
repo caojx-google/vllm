@@ -16,6 +16,8 @@ from logging import DEBUG
 from multiprocessing.queues import Queue
 from typing import Any, TypeVar, cast
 
+from vllm import trace
+
 import msgspec
 import zmq
 
@@ -290,6 +292,7 @@ class EngineCore:
     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
         return self.model_executor.supported_tasks
 
+    @trace.trace_event
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.
 
@@ -323,6 +326,7 @@ class EngineCore:
 
         self.scheduler.add_request(request)
 
+    @trace.trace_event
     def abort_requests(self, request_ids: list[str]):
         """Abort requests from the scheduler."""
 
@@ -377,6 +381,7 @@ class EngineCore:
         )
         self._iteration_index += 1
 
+    @trace.trace_event
     def step(self) -> tuple[dict[int, EngineCoreOutputs], bool]:
         """Schedule, execute, and make output.
 
@@ -408,6 +413,7 @@ class EngineCore:
 
         return engine_core_outputs, scheduler_output.total_num_scheduled_tokens > 0
 
+    @trace.trace_event
     def post_step(self, model_executed: bool) -> None:
         # When using async scheduling we can't get draft token ids in advance,
         # so we update draft token ids in the worker process and don't
@@ -418,6 +424,7 @@ class EngineCore:
             if draft_token_ids is not None:
                 self.scheduler.update_draft_token_ids(draft_token_ids)
 
+    @trace.trace_event
     def step_with_batch_queue(
         self,
     ) -> tuple[dict[int, EngineCoreOutputs] | None, bool]:
@@ -536,6 +543,7 @@ class EngineCore:
 
         return engine_core_outputs, model_executed
 
+    @trace.trace_event
     def _process_aborts_queue(self):
         if not self.aborts_queue.empty():
             request_ids = []
@@ -546,6 +554,7 @@ class EngineCore:
             # More efficient to abort all as a single batch.
             self.abort_requests(request_ids)
 
+    @trace.trace_event
     def shutdown(self):
         self.structured_output_manager.clear_backend()
         if self.model_executor:
@@ -553,9 +562,11 @@ class EngineCore:
         if self.scheduler:
             self.scheduler.shutdown()
 
+    @trace.trace_event
     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
         self.model_executor.profile(is_start, profile_prefix)
 
+    @trace.trace_event
     def reset_mm_cache(self):
         # NOTE: Since this is mainly for debugging, we don't attempt to
         # re-sync the internal caches (P0 sender, P1 receiver)
@@ -571,6 +582,7 @@ class EngineCore:
 
         self.model_executor.reset_mm_cache()
 
+    @trace.trace_event
     def reset_prefix_cache(
         self, reset_running_requests: bool = False, reset_connector: bool = False
     ) -> bool:
@@ -578,6 +590,7 @@ class EngineCore:
             reset_running_requests, reset_connector
         )
 
+    @trace.trace_event
     def reset_encoder_cache(self) -> None:
         """Reset the encoder cache to invalidate all cached encoder outputs.
 
@@ -598,11 +611,13 @@ class EngineCore:
         # Reset the GPU model runner's encoder cache (physical storage)
         self.model_executor.reset_encoder_cache()
 
+    @trace.trace_event
     def _reset_caches(self, reset_running_requests=True) -> None:
         self.reset_prefix_cache(reset_running_requests=reset_running_requests)
         self.reset_mm_cache()
         self.reset_encoder_cache()
 
+    @trace.trace_event
     def pause_scheduler(
         self, mode: PauseMode = "abort", clear_cache: bool = True
     ) -> Future | None:
@@ -634,14 +649,17 @@ class EngineCore:
 
         return None
 
+    @trace.trace_event
     def resume_scheduler(self) -> None:
         """Resume the scheduler and flush any requests queued while paused."""
         self.scheduler.set_pause_state(PauseState.UNPAUSED)
 
+    @trace.trace_event
     def is_scheduler_paused(self) -> bool:
         """Return whether the scheduler is in any pause state."""
         return self.scheduler.pause_state != PauseState.UNPAUSED
 
+    @trace.trace_event
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None | Future:
         """Put the engine to sleep at the specified level.
 
@@ -680,6 +698,7 @@ class EngineCore:
         pause_future.add_done_callback(pause_complete)
         return future
 
+    @trace.trace_event
     def wake_up(self, tags: list[str] | None = None):
         """Wake up the engine from sleep.
 
@@ -696,25 +715,32 @@ class EngineCore:
         # Resume scheduling (applies to all levels)
         self.resume_scheduler()
 
+    @trace.trace_event
     def is_sleeping(self) -> bool:
         """Check if engine is sleeping at any level."""
         return self.is_scheduler_paused() or self.model_executor.is_sleeping
 
+    @trace.trace_event
     def execute_dummy_batch(self):
         self.model_executor.execute_dummy_batch()
 
+    @trace.trace_event
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.model_executor.add_lora(lora_request)
 
+    @trace.trace_event
     def remove_lora(self, lora_id: int) -> bool:
         return self.model_executor.remove_lora(lora_id)
 
+    @trace.trace_event
     def list_loras(self) -> set[int]:
         return self.model_executor.list_loras()
 
+    @trace.trace_event
     def pin_lora(self, lora_id: int) -> bool:
         return self.model_executor.pin_lora(lora_id)
 
+    @trace.trace_event
     def save_sharded_state(
         self,
         path: str,
@@ -725,6 +751,7 @@ class EngineCore:
             path=path, pattern=pattern, max_size=max_size
         )
 
+    @trace.trace_event
     def collective_rpc(
         self,
         method: str | Callable[..., _R],
@@ -734,6 +761,7 @@ class EngineCore:
     ) -> list[_R]:
         return self.model_executor.collective_rpc(method, timeout, args, kwargs)
 
+    @trace.trace_event
     def preprocess_add_request(self, request: EngineCoreRequest) -> tuple[Request, int]:
         """Preprocess the request.
 
@@ -758,9 +786,11 @@ class EngineCore:
             self.structured_output_manager.grammar_init(req)
         return req, request.current_wave
 
+    @trace.trace_event
     def _eep_scale_up_before_kv_init(self):
         raise NotImplementedError
 
+    @trace.trace_event
     def _eep_send_engine_core_notification(
         self,
         notification_type: EEPNotificationType,
@@ -1034,6 +1064,7 @@ class EngineCoreProc(EngineCore):
 
         return init_message.addresses
 
+    @trace.trace_event
     @staticmethod
     def run_engine_core(*args, dp_rank: int = 0, local_dp_rank: int = 0, **kwargs):
         """Launch EngineCore busy loop in background process."""
@@ -1121,6 +1152,7 @@ class EngineCoreProc(EngineCore):
     def _init_data_parallel(self, vllm_config: VllmConfig):
         pass
 
+    @trace.trace_event
     def has_work(self) -> bool:
         """Returns true if the engine should be stepped."""
         return (
@@ -1129,10 +1161,12 @@ class EngineCoreProc(EngineCore):
             or bool(self.batch_queue)
         )
 
+    @trace.trace_event
     def is_running(self) -> bool:
         """Returns true if shutdown has not been requested."""
         return self.shutdown_state == EngineShutdownState.RUNNING
 
+    @trace.trace_event
     def run_busy_loop(self):
         """Core busy loop of the EngineCore."""
         while self._handle_shutdown():
@@ -1143,6 +1177,7 @@ class EngineCoreProc(EngineCore):
 
         raise SystemExit
 
+    @trace.trace_event
     def _process_input_queue(self):
         """Exits when an engine step needs to be performed."""
 
@@ -1174,6 +1209,7 @@ class EngineCoreProc(EngineCore):
             req = self.input_queue.get_nowait()
             self._handle_client_request(*req)
 
+    @trace.trace_event
     def _process_engine_step(self) -> bool:
         """Called only when there are unfinished local requests."""
 
@@ -1194,11 +1230,13 @@ class EngineCoreProc(EngineCore):
 
         return model_executed
 
+    @trace.trace_event
     def _notify_idle_state_callbacks(self) -> None:
         while self._idle_state_callbacks:
             callback = self._idle_state_callbacks.pop()
             callback(self)
 
+    @trace.trace_event
     def _handle_shutdown(self) -> bool:
         # Check if shutdown was requested and handle it
         if self.shutdown_state == EngineShutdownState.RUNNING:
@@ -1235,6 +1273,7 @@ class EngineCoreProc(EngineCore):
 
         return True
 
+    @trace.trace_event
     def _handle_client_request(
         self, request_type: EngineCoreRequestType, request: Any
     ) -> None:
@@ -1269,6 +1308,7 @@ class EngineCoreProc(EngineCore):
                 "Unrecognized input request type encountered: %s", request_type
             )
 
+    @trace.trace_event
     def _reject_add_in_shutdown(self, request: Request) -> bool:
         if self.shutdown_state == EngineShutdownState.RUNNING:
             return False
@@ -1277,6 +1317,7 @@ class EngineCoreProc(EngineCore):
         self._send_abort_outputs_to_client([request.request_id], request.client_index)
         return True
 
+    @trace.trace_event
     def _reject_utility_in_shutdown(
         self, client_idx: int, call_id: int, method_name: str
     ) -> bool:
@@ -1326,6 +1367,7 @@ class EngineCoreProc(EngineCore):
             for v, p in zip(args, arg_types)
         )
 
+    @trace.trace_event
     def _send_engine_dead(self):
         """Send EngineDead status to the EngineCoreClient."""
 
@@ -1340,6 +1382,7 @@ class EngineCoreProc(EngineCore):
                 "to send. Please report this issue."
             )
 
+    @trace.trace_event
     def process_input_sockets(
         self,
         input_addresses: list[str],
@@ -1428,6 +1471,7 @@ class EngineCoreProc(EngineCore):
                     # Push to input queue for core busy loop.
                     self.input_queue.put_nowait((request_type, request))
 
+    @trace.trace_event
     def process_output_sockets(
         self, output_paths: list[str], coord_output_path: str | None, engine_index: int
     ):
@@ -1504,6 +1548,7 @@ class EngineCoreProc(EngineCore):
         )
         self._send_error_outputs_to_client([request.request_id], request.client_index)
 
+    @trace.trace_event
     def pause_scheduler(
         self, mode: PauseMode = "abort", clear_cache: bool = True
     ) -> Future | None:
@@ -1693,6 +1738,7 @@ class DPEngineCoreProc(EngineCoreProc):
             )
             self.output_queue.put_nowait((-1, EngineCoreOutputs(scheduler_stats=stats)))
 
+    @trace.trace_event
     def run_busy_loop(self):
         """Core busy loop of the EngineCore for data parallel case."""
 
@@ -1757,6 +1803,7 @@ class DPEngineCoreProc(EngineCoreProc):
 
         return ParallelConfig.has_unfinished_dp(self.dp_group, local_unfinished)
 
+    @trace.trace_event
     def reinitialize_distributed(
         self, reconfig_request: ReconfigureDistributedRequest
     ) -> None:
