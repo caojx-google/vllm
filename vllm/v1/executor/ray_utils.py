@@ -389,7 +389,7 @@ def initialize_ray_cluster(
     elif current_platform.is_rocm() or current_platform.is_xpu():
         # Try to connect existing ray instance and create a new one if not found
         try:
-            ray.init("auto")
+            ray.init("auto", log_to_driver=False)
         except ConnectionError:
             logger.warning(
                 "No existing RAY instance detected. "
@@ -399,6 +399,7 @@ def initialize_ray_cluster(
                 address=ray_address,
                 num_gpus=parallel_config.world_size,
                 runtime_env=parallel_config.ray_runtime_env,
+                log_to_driver=False,
             )
     else:
         ray.init(address=ray_address, runtime_env=parallel_config.ray_runtime_env)

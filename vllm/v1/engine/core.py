@@ -497,6 +497,8 @@ class EngineCore:
             # is non-empty.
             return None, False
 
+        trace.trace_start("wait_for_next_result")
+        
         # Block until the next result is available.
         future, scheduler_output, exec_model_fut = batch_queue.pop()
         with (
@@ -510,6 +512,10 @@ class EngineCore:
                 exec_model_fut.result()
                 raise RuntimeError("unexpected error")
 
+        trace.trace_end("wait_for_next_result")
+
+        trace.trace_start("update_from_output")
+
         # Before processing the model output, process any aborts that happened
         # during the model execution.
         self._process_aborts_queue()
@@ -517,10 +523,14 @@ class EngineCore:
             scheduler_output, model_output
         )
 
+        trace.trace_end("update_from_output")
+
         # NOTE(nick): We can either handle the deferred tasks here or save
         # in a field and do it immediately once step_with_batch_queue is
         # re-called. The latter slightly favors TTFT over TPOT/throughput.
         if deferred_scheduler_output:
+            trace.trace_start("deferred_scheduler_output")
+
             # If we are doing speculative decoding with structured output,
             # we need to get the draft token ids from the prior step before
             # we can compute the grammar bitmask for the deferred request.
@@ -540,6 +550,8 @@ class EngineCore:
             )
             future = self.model_executor.sample_tokens(grammar_output, non_block=True)
             batch_queue.appendleft((future, deferred_scheduler_output, exec_future))
+
+            trace.trace_end("deferred_scheduler_output")
 
         return engine_core_outputs, model_executed
 
@@ -1170,10 +1182,14 @@ class EngineCoreProc(EngineCore):
     def run_busy_loop(self):
         """Core busy loop of the EngineCore."""
         while self._handle_shutdown():
+            trace.trace_start("busy_loop_iteration")
+
             # 1) Poll the input queue until there is work to do.
             self._process_input_queue()
             # 2) Step the engine core and return the outputs.
             self._process_engine_step()
+
+            trace.trace_end("busy_loop_iteration")
 
         raise SystemExit
 
